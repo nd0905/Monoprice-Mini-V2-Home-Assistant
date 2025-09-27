@@ -1,6 +1,4 @@
 {
     "name": "Monoprice Select Mini V2",
-    "content_in_root": false,
-    "iot_class": "Local Polling",
-    "domains": ["sensor", "number", "button"]
+    "content_in_root": false
   }
