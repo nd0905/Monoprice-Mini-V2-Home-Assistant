@@ -1,0 +1,14 @@
+{
+    "domain": "mp_mini_v2",
+    "name": "Monoprice Select Mini V2",
+    "version": "1.0.0",
+    "documentation": "https://github.com/nd0905/Monoprice-Mini-V2-Home-Assistant",
+    "dependencies": ["http"],
+    "codeowners": ["@nd0905"],
+    "requirements": [],
+    "issue_tracker": "https://github.com/nd0905/Monoprice-Mini-V2-Home-Assistant/issues",
+    "config_flow": true,
+    "iot_class": "local_polling",
+    "logo": "https://brands.home-assistant.io/monoprice/logo.png",
+    "icon": "https://brands.home-assistant.io/monoprice/icon.png"
+  }
