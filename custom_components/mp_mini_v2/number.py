@@ -1,75 +1,57 @@
-# custom_components/mp_mini_v2/number.py
-import requests
-from homeassistant.components.number import NumberEntity
-from homeassistant.const import CONF_HOST, UnitOfTemperature
-from .const import DOMAIN
+# custom_components/mp_mini_v2/coordinator.py
+import logging
+import asyncio
+import aiohttp
+import async_timeout
+from datetime import timedelta
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-async def async_setup_entry(hass, entry, async_add_entities):
-    host = entry.data[CONF_HOST]
-    async_add_entities([
-        MPSelectMiniV2Number(entry.entry_id, host, "Target Extruder Temperature", 0, 280, 0),
-        MPSelectMiniV2Number(entry.entry_id, host, "Target Bed Temperature", 0, 80, 0),
-    ])
+from .const import DOMAIN, SCAN_INTERVAL
 
-class MPSelectMiniV2Number(NumberEntity):
-    def __init__(self, entry_id, host, name, native_min_value, native_max_value, initial_value):
-        self._entry_id = entry_id
-        self._host = host
-        self._name = name
-        self._attr_native_min_value = native_min_value
-        self._attr_native_max_value = native_max_value
-        self._value = initial_value
-        self._native_unit_of_measurement = UnitOfTemperature.CELSIUS
-        self._icon = "mdi:target"
-        self._mode = "box"
-        self._step = 1
+_LOGGER = logging.getLogger(__name__)
 
+class MPSelectMiniV2Coordinator(DataUpdateCoordinator):
+    """Coordinator to fetch data from the printer once and share with all sensors."""
 
-    @property
-    def unique_id(self):
-        return f"{self._entry_id}_{self._name}"
+    def __init__(self, hass: HomeAssistant, host: str):
+        """Initialize the coordinator."""
+        self.host = host
+        self._session = None
+        
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=SCAN_INTERVAL,
+        )
 
-    @property
-    def name(self):
-        return self._name
+    async def _async_update_data(self):
+        """Fetch data from the printer."""
+        url = f"http://{self.host}/inquiry"
+        
+        try:
+            # Create session if it doesn't exist (reuse across updates)
+            if self._session is None or self._session.closed:
+                self._session = aiohttp.ClientSession()
+            
+            # Use async_timeout to prevent hanging
+            async with async_timeout.timeout(5):  # 5 second timeout
+                async with self._session.get(url) as response:
+                    response.raise_for_status()
+                    return await response.text()
+                    
+        except asyncio.TimeoutError:
+            _LOGGER.warning("Timeout fetching data from printer at %s", self.host)
+            raise UpdateFailed(f"Timeout connecting to printer")
+        except aiohttp.ClientError as err:
+            _LOGGER.warning("Error fetching data from printer: %s", err)
+            raise UpdateFailed(f"Error communicating with printer: {err}")
+        except Exception as err:
+            _LOGGER.exception("Unexpected error fetching printer data: %s", err)
+            raise UpdateFailed(f"Unexpected error: {err}")
 
-    @property
-    def native_min_value(self):
-        return self._attr_native_min_value
-
-    @property
-    def native_max_value(self):
-        return self._attr_native_max_value
-
-    @property
-    def value(self):
-        return int(self._value)
-
-    @property
-    def native_unit_of_measurement(self):
-        return self._native_unit_of_measurement
-
-    @property
-    def icon(self):
-        return self._icon
-    
-    @property
-    def mode(self):
-        return self._mode
-    
-    @property
-    def step(self):
-        return self._step
-
-    @property
-    def device_info(self):
-        return {
-            "identifiers": {(DOMAIN, self._entry_id)},
-            "name": "Monoprice Select Mini V2",
-            "manufacturer": "Monoprice",
-            "model": "Select Mini V2",
-        }
-
-    async def async_set_value(self, value):
-        self._value = int(value)
-        self.async_write_ha_state()
+    async def async_shutdown(self):
+        """Close the aiohttp session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
