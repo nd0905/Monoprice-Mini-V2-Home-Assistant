@@ -1,44 +1,35 @@
 # custom_components/mp_mini_v2/sensor.py
-import aiohttp
 import logging
+import re
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import CONF_HOST, UnitOfTemperature
-from homeassistant.helpers.event import async_track_time_interval
-from .const import DOMAIN, SCAN_INTERVAL
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    host = entry.data[CONF_HOST]
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    
     sensors = [
-        MPSelectMiniV2Sensor(entry.entry_id, host, "Extruder Temperature", "temperature"),
-        MPSelectMiniV2Sensor(entry.entry_id, host, "Extruder Target", "temperature"),
-        MPSelectMiniV2Sensor(entry.entry_id, host, "Bed Temperature", "temperature"),
-        MPSelectMiniV2Sensor(entry.entry_id, host, "Bed Target", "temperature"),
-        MPSelectMiniV2Sensor(entry.entry_id, host, "Printer Status", "enum"),
-        MPSelectMiniV2Sensor(entry.entry_id, host, "Printer Progress", None),
+        MPSelectMiniV2Sensor(coordinator, entry.entry_id, "Extruder Temperature", "temperature"),
+        MPSelectMiniV2Sensor(coordinator, entry.entry_id, "Extruder Target", "temperature"),
+        MPSelectMiniV2Sensor(coordinator, entry.entry_id, "Bed Temperature", "temperature"),
+        MPSelectMiniV2Sensor(coordinator, entry.entry_id, "Bed Target", "temperature"),
+        MPSelectMiniV2Sensor(coordinator, entry.entry_id, "Printer Status", "enum"),
+        MPSelectMiniV2Sensor(coordinator, entry.entry_id, "Printer Progress", None),
     ]
     async_add_entities(sensors)
 
-class MPSelectMiniV2Sensor(SensorEntity):
-    def __init__(self, entry_id, host, name, device_class):
+class MPSelectMiniV2Sensor(CoordinatorEntity, SensorEntity):
+    """Sensor that uses the coordinator for updates."""
+    
+    def __init__(self, coordinator, entry_id, name, device_class):
+        """Initialize the sensor."""
+        super().__init__(coordinator)
         self._entry_id = entry_id
-        self._host = host
         self._name = name
         self._device_class = device_class
-        self._state = None
-        self._async_unsub_update = None
-
-    async def async_added_to_hass(self):
-        self._async_unsub_update = async_track_time_interval(
-            self.hass, self.async_update, SCAN_INTERVAL
-        )
-        await self.async_update()
-
-    async def async_will_remove_from_hass(self) -> None:
-        if self._async_unsub_update is not None:
-            self._async_unsub_update()
-            self._async_unsub_update = None
 
     @property
     def unique_id(self):
@@ -50,7 +41,10 @@ class MPSelectMiniV2Sensor(SensorEntity):
 
     @property
     def state(self):
-        return self._state
+        """Return the state of the sensor."""
+        if self.coordinator.data is None:
+            return None
+        return self.parse_response(self.coordinator.data)
     
     @property
     def device_class(self):
@@ -76,41 +70,34 @@ class MPSelectMiniV2Sensor(SensorEntity):
             "model": "Select Mini V2",
         }
     
-    async def async_update(self, now=None) -> None:
-        url = f"http://{self._host}/inquiry"
-
-        try:
-            async with (
-                aiohttp.ClientSession() as session,
-                session.get(url) as response,
-            ):
-                response.raise_for_status()
-                response_data = await response.text()
-                if response_data:
-                    self._state = self.parse_response(response_data)
-                self.async_schedule_update_ha_state()
-
-        except ConnectionError as e:
-            _LOGGER.error("Error connecting to the 3D printer: %s", e)
-        except aiohttp.ClientError as e:
-            _LOGGER.error("HTTP error occurred: %s", e)
-        except Exception as e:
-            _LOGGER.exception("An error occurred: %s", e)
-        return None
+    @property
+    def available(self) -> bool:
+        """Return if entity is available."""
+        return self.coordinator.last_update_success
 
     def parse_response(self, data):
-        import re
-        if self._name == "Extruder Temperature":
-            return re.findall(r'\d+', data)[0]
-        if self._name == "Extruder Target":
-            return re.findall(r'\d+', data)[1]
-        elif self._name == "Bed Temperature":
-            return re.findall(r'\d+', data)[2]
-        elif self._name == "Bed Target":
-            return re.findall(r'\d+', data)[3]
-        elif self._name == "Printer Status":
-            c = data[-1]
-            return "Idle" if c == 'I' else "Printing" if c == 'P' else "Unknown"
-        elif self._name == "Printer Progress":
-            c = data[-1]
-            return f"{re.findall(r'\d+', data)[4]}%" if c == 'P' else "Idle"
+        """Parse the response data for this specific sensor."""
+        if not data:
+            return None
+            
+        try:
+            if self._name == "Extruder Temperature":
+                return re.findall(r'\d+', data)[0]
+            if self._name == "Extruder Target":
+                return re.findall(r'\d+', data)[1]
+            elif self._name == "Bed Temperature":
+                return re.findall(r'\d+', data)[2]
+            elif self._name == "Bed Target":
+                return re.findall(r'\d+', data)[3]
+            elif self._name == "Printer Status":
+                c = data[-1]
+                return "Idle" if c == 'I' else "Printing" if c == 'P' else "Unknown"
+            elif self._name == "Printer Progress":
+                c = data[-1]
+                return f"{re.findall(r'\d+', data)[4]}%" if c == 'P' else "Idle"
+        except (IndexError, ValueError) as e:
+            _LOGGER.warning("Error parsing %s from data: %s", self._name, e)
+            return None
+        
+        return None
+
